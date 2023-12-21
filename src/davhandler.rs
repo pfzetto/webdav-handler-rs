@@ -11,6 +11,7 @@ use futures::stream::Stream;
 use headers::HeaderMapExt;
 use http::{Request, Response, StatusCode};
 use http_body::Body as HttpBody;
+use http_body_util::BodyExt;
 
 use crate::body::{Body, StreamBody};
 use crate::davheaders;
@@ -29,7 +30,7 @@ use crate::DavResult;
 /// The `new` and `build` etc methods are used to instantiate a handler.
 ///
 /// The `handle` and `handle_with` methods are the methods that do the actual work.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct DavHandler {
     pub(crate) config: Arc<DavConfig>,
 }
@@ -38,30 +39,30 @@ pub struct DavHandler {
 #[derive(Default)]
 pub struct DavConfig {
     // Prefix to be stripped off when handling request.
-    pub(crate) prefix:        Option<String>,
+    pub(crate) prefix: Option<String>,
     // Filesystem backend.
-    pub(crate) fs:            Option<Box<dyn DavFileSystem>>,
+    pub(crate) fs: Option<Box<dyn DavFileSystem>>,
     // Locksystem backend.
-    pub(crate) ls:            Option<Box<dyn DavLockSystem>>,
+    pub(crate) ls: Option<Box<dyn DavLockSystem>>,
     // Set of allowed methods (None means "all methods")
-    pub(crate) allow:         Option<DavMethodSet>,
+    pub(crate) allow: Option<DavMethodSet>,
     // Principal is webdav speak for "user", used to give locks an owner (if a locksystem is
     // active).
-    pub(crate) principal:     Option<String>,
+    pub(crate) principal: Option<String>,
     // Hide symbolic links? `None` maps to `true`.
     pub(crate) hide_symlinks: Option<bool>,
     // Does GET on a directory return indexes.
-    pub(crate) autoindex:     Option<bool>,
+    pub(crate) autoindex: Option<bool>,
     // Localtime for directory indexes
-    pub(crate) utcoffset:     Option<UtcOffset>,
+    pub(crate) utcoffset: Option<UtcOffset>,
     // index.html
-    pub(crate) indexfile:     Option<String>,
+    pub(crate) indexfile: Option<String>,
 }
 
 impl DavConfig {
     /// Create a new configuration builder.
-    pub fn new() -> DavConfig {
-        DavConfig::default()
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Use the configuration that was built to generate a DavConfig.
@@ -132,17 +133,17 @@ impl DavConfig {
         this
     }
 
-    fn merge(&self, new: DavConfig) -> DavConfig {
-        DavConfig {
-            prefix:        new.prefix.or(self.prefix.clone()),
-            fs:            new.fs.or(self.fs.clone()),
-            ls:            new.ls.or(self.ls.clone()),
-            allow:         new.allow.or(self.allow.clone()),
-            principal:     new.principal.or(self.principal.clone()),
-            hide_symlinks: new.hide_symlinks.or(self.hide_symlinks.clone()),
-            autoindex:     new.autoindex.or(self.autoindex.clone()),
-            utcoffset:     new.utcoffset,
-            indexfile:     new.indexfile.or(self.indexfile.clone()),
+    fn merge(&self, new: Self) -> Self {
+        Self {
+            prefix: new.prefix.or(self.prefix.clone()),
+            fs: new.fs.or(self.fs.clone()),
+            ls: new.ls.or(self.ls.clone()),
+            allow: new.allow.or(self.allow),
+            principal: new.principal.or(self.principal.clone()),
+            hide_symlinks: new.hide_symlinks.or(self.hide_symlinks),
+            autoindex: new.autoindex.or(self.autoindex),
+            utcoffset: new.utcoffset,
+            indexfile: new.indexfile.or(self.indexfile.clone()),
         }
     }
 }
@@ -152,29 +153,29 @@ impl DavConfig {
 // At the start of the request, DavConfig is used to generate
 // a DavInner struct. DavInner::handle then handles the request.
 pub(crate) struct DavInner {
-    pub prefix:        String,
-    pub fs:            Box<dyn DavFileSystem>,
-    pub ls:            Option<Box<dyn DavLockSystem>>,
-    pub allow:         Option<DavMethodSet>,
-    pub principal:     Option<String>,
+    pub prefix: String,
+    pub fs: Box<dyn DavFileSystem>,
+    pub ls: Option<Box<dyn DavLockSystem>>,
+    pub allow: Option<DavMethodSet>,
+    pub principal: Option<String>,
     pub hide_symlinks: Option<bool>,
-    pub autoindex:     Option<bool>,
-    pub utcoffset:     Option<UtcOffset>,
-    pub indexfile:     Option<String>,
+    pub autoindex: Option<bool>,
+    pub utcoffset: Option<UtcOffset>,
+    pub indexfile: Option<String>,
 }
 
 impl From<DavConfig> for DavInner {
     fn from(cfg: DavConfig) -> Self {
         DavInner {
-            prefix:        cfg.prefix.unwrap_or("".to_string()),
-            fs:            cfg.fs.unwrap_or(VoidFs::new()),
-            ls:            cfg.ls,
-            allow:         cfg.allow,
-            principal:     cfg.principal,
+            prefix: cfg.prefix.unwrap_or("".to_string()),
+            fs: cfg.fs.unwrap_or(VoidFs::new()),
+            ls: cfg.ls,
+            allow: cfg.allow,
+            principal: cfg.principal,
             hide_symlinks: cfg.hide_symlinks,
-            autoindex:     cfg.autoindex,
-            utcoffset:     cfg.utcoffset,
-            indexfile:     cfg.indexfile,
+            autoindex: cfg.autoindex,
+            utcoffset: cfg.utcoffset,
+            indexfile: cfg.indexfile,
         }
     }
 }
@@ -182,19 +183,19 @@ impl From<DavConfig> for DavInner {
 impl From<&DavConfig> for DavInner {
     fn from(cfg: &DavConfig) -> Self {
         DavInner {
-            prefix:        cfg
+            prefix: cfg
                 .prefix
                 .as_ref()
                 .map(|p| p.to_owned())
                 .unwrap_or("".to_string()),
-            fs:            cfg.fs.clone().unwrap(),
-            ls:            cfg.ls.clone(),
-            allow:         cfg.allow,
-            principal:     cfg.principal.clone(),
-            hide_symlinks: cfg.hide_symlinks.clone(),
-            autoindex:     cfg.autoindex.clone(),
-            utcoffset:     cfg.utcoffset,
-            indexfile:     cfg.indexfile.clone(),
+            fs: cfg.fs.clone().unwrap(),
+            ls: cfg.ls.clone(),
+            allow: cfg.allow,
+            principal: cfg.principal.clone(),
+            hide_symlinks: cfg.hide_symlinks,
+            autoindex: cfg.autoindex,
+            utcoffset: cfg.utcoffset,
+            indexfile: cfg.indexfile.clone(),
         }
     }
 }
@@ -202,15 +203,15 @@ impl From<&DavConfig> for DavInner {
 impl Clone for DavInner {
     fn clone(&self) -> Self {
         DavInner {
-            prefix:        self.prefix.clone(),
-            fs:            self.fs.clone(),
-            ls:            self.ls.clone(),
-            allow:         self.allow.clone(),
-            principal:     self.principal.clone(),
-            hide_symlinks: self.hide_symlinks.clone(),
-            autoindex:     self.autoindex.clone(),
-            utcoffset:     self.utcoffset,
-            indexfile:     self.indexfile.clone(),
+            prefix: self.prefix.clone(),
+            fs: self.fs.clone(),
+            ls: self.ls.clone(),
+            allow: self.allow,
+            principal: self.principal.clone(),
+            hide_symlinks: self.hide_symlinks,
+            autoindex: self.autoindex,
+            utcoffset: self.utcoffset,
+            indexfile: self.indexfile.clone(),
         }
     }
 }
@@ -222,10 +223,8 @@ impl DavHandler {
     /// useful if you use the `handle_with` method instead of `handle`.
     /// Normally you should create a new `DavHandler` using `DavHandler::build`
     /// and configure at least the filesystem, and probably the strip_prefix.
-    pub fn new() -> DavHandler {
-        DavHandler {
-            config: Arc::new(DavConfig::default()),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Return a configuration builder.
@@ -324,8 +323,7 @@ impl DavInner {
         res: &mut Response<Body>,
         path: &mut DavPath,
         meta: Box<dyn DavMetaData>,
-    ) -> Box<dyn DavMetaData>
-    {
+    ) -> Box<dyn DavMetaData> {
         if meta.is_dir() && !path.is_collection() {
             path.add_slash();
             let newloc = path.with_prefix().as_url_string();
@@ -336,8 +334,8 @@ impl DavInner {
     }
 
     // drain request body and return length.
-    pub(crate) async fn read_request<'a, ReqBody, ReqData, ReqError>(
-        &'a self,
+    pub(crate) async fn read_request<ReqBody, ReqData, ReqError>(
+        &self,
         body: ReqBody,
         max_size: usize,
     ) -> DavResult<Vec<u8>>
@@ -348,18 +346,20 @@ impl DavInner {
     {
         let mut data = Vec::new();
         pin_utils::pin_mut!(body);
-        while let Some(res) = body.data().await {
-            let mut buf = res.map_err(|_| {
+        while let Some(res) = body.frame().await {
+            let buf = res.map(|x| x.into_data()).map_err(|_| {
                 DavError::IoError(io::Error::new(io::ErrorKind::UnexpectedEof, "UnexpectedEof"))
             })?;
-            while buf.has_remaining() {
-                if data.len() + buf.remaining() > max_size {
-                    return Err(StatusCode::PAYLOAD_TOO_LARGE.into());
+            if let Ok(mut buf) = buf {
+                while buf.has_remaining() {
+                    if data.len() + buf.remaining() > max_size {
+                        return Err(StatusCode::PAYLOAD_TOO_LARGE.into());
+                    }
+                    let b = buf.chunk();
+                    let l = b.len();
+                    data.extend_from_slice(b);
+                    buf.advance(l);
                 }
-                let b = buf.chunk();
-                let l = b.len();
-                data.extend_from_slice(b);
-                buf.advance(l);
             }
         }
         Ok(data)
@@ -483,13 +483,13 @@ impl DavInner {
 
         // Not all methods accept a body.
         match method {
-            DavMethod::Put |
-            DavMethod::Patch |
-            DavMethod::PropFind |
-            DavMethod::PropPatch |
-            DavMethod::Lock => {},
+            DavMethod::Put
+            | DavMethod::Patch
+            | DavMethod::PropFind
+            | DavMethod::PropPatch
+            | DavMethod::Lock => {},
             _ => {
-                if body_data.len() > 0 {
+                if !body_data.is_empty() {
                     return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into());
                 }
             },
@@ -497,7 +497,7 @@ impl DavInner {
 
         debug!("== START REQUEST {:?} {}", method, path);
 
-        let res = match method {
+        match method {
             DavMethod::Options => self.handle_options(&req).await,
             DavMethod::PropFind => self.handle_propfind(&req, &body_data).await,
             DavMethod::PropPatch => self.handle_proppatch(&req, &body_data).await,
@@ -508,7 +508,6 @@ impl DavInner {
             DavMethod::Head | DavMethod::Get => self.handle_get(&req).await,
             DavMethod::Copy | DavMethod::Move => self.handle_copymove(&req, method).await,
             DavMethod::Put | DavMethod::Patch => self.handle_put(&req, body_strm.unwrap()).await,
-        };
-        res
+        }
     }
 }

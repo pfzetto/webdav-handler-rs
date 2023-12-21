@@ -11,43 +11,41 @@ use crate::DavResult;
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 #[repr(u32)]
 pub enum DavMethod {
-    Head      = 0x0001,
-    Get       = 0x0002,
-    Put       = 0x0004,
-    Patch     = 0x0008,
-    Options   = 0x0010,
-    PropFind  = 0x0020,
+    Head = 0x0001,
+    Get = 0x0002,
+    Put = 0x0004,
+    Patch = 0x0008,
+    Options = 0x0010,
+    PropFind = 0x0020,
     PropPatch = 0x0040,
-    MkCol     = 0x0080,
-    Copy      = 0x0100,
-    Move      = 0x0200,
-    Delete    = 0x0400,
-    Lock      = 0x0800,
-    Unlock    = 0x1000,
+    MkCol = 0x0080,
+    Copy = 0x0100,
+    Move = 0x0200,
+    Delete = 0x0400,
+    Lock = 0x0800,
+    Unlock = 0x1000,
 }
 
 // translate method into our own enum that has webdav methods as well.
 pub(crate) fn dav_method(m: &http::Method) -> DavResult<DavMethod> {
-    let m = match m {
-        &http::Method::HEAD => DavMethod::Head,
-        &http::Method::GET => DavMethod::Get,
-        &http::Method::PUT => DavMethod::Put,
-        &http::Method::PATCH => DavMethod::Patch,
-        &http::Method::DELETE => DavMethod::Delete,
-        &http::Method::OPTIONS => DavMethod::Options,
-        _ => {
-            match m.as_str() {
-                "PROPFIND" => DavMethod::PropFind,
-                "PROPPATCH" => DavMethod::PropPatch,
-                "MKCOL" => DavMethod::MkCol,
-                "COPY" => DavMethod::Copy,
-                "MOVE" => DavMethod::Move,
-                "LOCK" => DavMethod::Lock,
-                "UNLOCK" => DavMethod::Unlock,
-                _ => {
-                    return Err(DavError::UnknownDavMethod);
-                },
-            }
+    let m = match *m {
+        http::Method::HEAD => DavMethod::Head,
+        http::Method::GET => DavMethod::Get,
+        http::Method::PUT => DavMethod::Put,
+        http::Method::PATCH => DavMethod::Patch,
+        http::Method::DELETE => DavMethod::Delete,
+        http::Method::OPTIONS => DavMethod::Options,
+        _ => match m.as_str() {
+            "PROPFIND" => DavMethod::PropFind,
+            "PROPPATCH" => DavMethod::PropPatch,
+            "MKCOL" => DavMethod::MkCol,
+            "COPY" => DavMethod::Copy,
+            "MOVE" => DavMethod::Move,
+            "LOCK" => DavMethod::Lock,
+            "UNLOCK" => DavMethod::Unlock,
+            _ => {
+                return Err(DavError::UnknownDavMethod);
+            },
         },
     };
     Ok(m)
@@ -156,7 +154,7 @@ impl MemBuffer {
     }
 
     pub fn take(&mut self) -> Bytes {
-        let buf = std::mem::replace(self.0.get_mut(), Vec::new());
+        let buf = std::mem::take(self.0.get_mut());
         self.0.set_position(0);
         Bytes::from(buf)
     }
@@ -174,8 +172,9 @@ impl Write for MemBuffer {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::UNIX_EPOCH;
+
+    use crate::time::systemtime_to_rfc3339;
 
     #[test]
     fn test_rfc3339() {

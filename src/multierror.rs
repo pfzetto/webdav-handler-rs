@@ -3,7 +3,6 @@ use std::io;
 use futures::{Stream, StreamExt};
 
 use http::{Response, StatusCode};
-use xml;
 use xml::common::XmlVersion;
 use xml::writer::EventWriter;
 use xml::writer::XmlEvent as XmlWEvent;
@@ -28,8 +27,7 @@ impl MultiError {
         &'a mut self,
         path: &'a DavPath,
         status: impl Into<DavError> + 'static,
-    ) -> Result<(), futures::channel::mpsc::SendError>
-    {
+    ) -> Result<(), futures::channel::mpsc::SendError> {
         let status = status.into().statuscode();
         self.0.send((path.clone(), status)).await;
         Ok(())
@@ -39,27 +37,31 @@ impl MultiError {
 type XmlWriter<'a> = EventWriter<MemBuffer>;
 
 fn write_elem<'b, S>(xw: &mut XmlWriter, name: S, text: &str) -> Result<(), DavError>
-where S: Into<xml::name::Name<'b>> {
+where
+    S: Into<xml::name::Name<'b>>,
+{
     let n = name.into();
     xw.write(XmlWEvent::start_element(n))?;
-    if text.len() > 0 {
+    if !text.is_empty() {
         xw.write(XmlWEvent::characters(text))?;
     }
     xw.write(XmlWEvent::end_element())?;
     Ok(())
 }
 
-fn write_response(mut w: &mut XmlWriter, path: &DavPath, sc: StatusCode) -> Result<(), DavError> {
+fn write_response(w: &mut XmlWriter, path: &DavPath, sc: StatusCode) -> Result<(), DavError> {
     w.write(XmlWEvent::start_element("D:response"))?;
     let p = path.with_prefix().as_url_string();
-    write_elem(&mut w, "D:href", &p)?;
-    write_elem(&mut w, "D:status", &format!("HTTP/1.1 {}", sc))?;
+    write_elem(w, "D:href", &p)?;
+    write_elem(w, "D:status", &format!("HTTP/1.1 {}", sc))?;
     w.write(XmlWEvent::end_element())?;
     Ok(())
 }
 
 pub(crate) async fn multi_error<S>(req_path: DavPath, status_stream: S) -> Result<Response<Body>, DavError>
-where S: Stream<Item = Result<(DavPath, StatusCode), DavError>> + Send + 'static {
+where
+    S: Stream<Item = Result<(DavPath, StatusCode), DavError>> + Send + 'static,
+{
     // read the first path/status item
     let mut status_stream = Box::pin(status_stream);
     let (path, status) = match status_stream.next().await {
@@ -105,8 +107,8 @@ where S: Stream<Item = Result<(DavPath, StatusCode), DavError>> + Send + 'static
                 },
             );
             xw.write(XmlWEvent::StartDocument {
-                version:    XmlVersion::Version10,
-                encoding:   Some("utf-8"),
+                version: XmlVersion::Version10,
+                encoding: Some("utf-8"),
                 standalone: None,
             })
             .map_err(DavError::from)?;

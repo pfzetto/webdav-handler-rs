@@ -7,8 +7,7 @@ use std::task::{Context, Poll};
 
 use bytes::{Buf, Bytes};
 use futures::stream::Stream;
-use http::header::HeaderMap;
-use http_body::Body as HttpBody;
+use http_body::{Body as HttpBody, Frame};
 
 use crate::async_stream::AsyncStream;
 
@@ -38,7 +37,7 @@ impl Stream for Body {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         match self.inner {
-            BodyType::Bytes(ref mut strm) => Poll::Ready(strm.take().map(|b| Ok(b))),
+            BodyType::Bytes(ref mut strm) => Poll::Ready(strm.take().map(Ok)),
             BodyType::AsyncStream(ref mut strm) => {
                 let strm = Pin::new(strm);
                 strm.poll_next(cx)
@@ -52,16 +51,11 @@ impl HttpBody for Body {
     type Data = Bytes;
     type Error = io::Error;
 
-    fn poll_data(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<Self::Data, Self::Error>>> {
-        self.poll_next(cx)
-    }
-
-    fn poll_trailers(
+    fn poll_frame(
         self: Pin<&mut Self>,
-        _cx: &mut Context,
-    ) -> Poll<Result<Option<HeaderMap>, Self::Error>>
-    {
-        Poll::Ready(Ok(None))
+        cx: &mut Context,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        self.poll_next(cx).map(|x| x.map(|y| y.map(Frame::data)))
     }
 }
 
@@ -117,21 +111,14 @@ where
     type Data = ReqData;
     type Error = ReqError;
 
-    fn poll_data(
+    fn poll_frame(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Self::Data, Self::Error>>>
-    {
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
         let this = self.project();
-        this.body.poll_next(cx)
-    }
-
-    fn poll_trailers(
-        self: Pin<&mut Self>,
-        _cx: &mut Context,
-    ) -> Poll<Result<Option<HeaderMap>, Self::Error>>
-    {
-        Poll::Ready(Ok(None))
+        this.body
+            .poll_next(cx)
+            .map(|x| x.map(|y| y.map(|z| Frame::data(z))))
     }
 }
 

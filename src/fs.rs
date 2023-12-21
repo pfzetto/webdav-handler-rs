@@ -58,13 +58,13 @@ pub type FsResult<T> = std::result::Result<T, FsError>;
 #[derive(Debug, Clone)]
 pub struct DavProp {
     /// Name of the property.
-    pub name:      String,
+    pub name: String,
     /// XML prefix.
-    pub prefix:    Option<String>,
+    pub prefix: Option<String>,
     /// XML namespace.
     pub namespace: Option<String>,
     /// Value of the property as raw XML.
-    pub xml:       Option<Vec<u8>>,
+    pub xml: Option<Vec<u8>>,
 }
 
 /// Future returned by almost all of the DavFileSystem methods.
@@ -199,8 +199,7 @@ pub trait DavFileSystem: Sync + Send + BoxCloneFs {
         &'a self,
         path: &'a DavPath,
         patch: Vec<(bool, DavProp)>,
-    ) -> FsFuture<Vec<(StatusCode, DavProp)>>
-    {
+    ) -> FsFuture<Vec<(StatusCode, DavProp)>> {
         notimplemented_fut!("patch_props")
     }
 
@@ -228,7 +227,7 @@ pub trait DavFileSystem: Sync + Send + BoxCloneFs {
     ///
     /// The default implementation returns FsError::NotImplemented.
     #[allow(unused_variables)]
-    fn get_quota<'a>(&'a self) -> FsFuture<(u64, Option<u64>)> {
+    fn get_quota(&self) -> FsFuture<(u64, Option<u64>)> {
         notimplemented_fut!("get_quota`")
     }
 }
@@ -260,23 +259,23 @@ pub trait DavDirEntry: Send + Sync {
     fn name(&self) -> Vec<u8>;
 
     /// Metadata of the entry.
-    fn metadata<'a>(&'a self) -> FsFuture<Box<dyn DavMetaData>>;
+    fn metadata(&self) -> FsFuture<Box<dyn DavMetaData>>;
 
     /// Default implementation of `is_dir` just returns `metadata()?.is_dir()`.
     /// Implementations can override this if their `metadata()` method is
     /// expensive and there is a cheaper way to provide the same info
     /// (e.g. dirent.d_type in unix filesystems).
-    fn is_dir<'a>(&'a self) -> FsFuture<bool> {
+    fn is_dir(&self) -> FsFuture<bool> {
         Box::pin(self.metadata().and_then(|meta| future::ok(meta.is_dir())))
     }
 
     /// Likewise. Default: `!is_dir()`.
-    fn is_file<'a>(&'a self) -> FsFuture<bool> {
+    fn is_file(&self) -> FsFuture<bool> {
         Box::pin(self.metadata().and_then(|meta| future::ok(meta.is_file())))
     }
 
     /// Likewise. Default: `false`.
-    fn is_symlink<'a>(&'a self) -> FsFuture<bool> {
+    fn is_symlink(&self) -> FsFuture<bool> {
         Box::pin(self.metadata().and_then(|meta| future::ok(meta.is_symlink())))
     }
 }
@@ -284,12 +283,12 @@ pub trait DavDirEntry: Send + Sync {
 /// A `DavFile` is the equivalent of `std::fs::File`, should be
 /// readable/writeable/seekable, and be able to return its metadata.
 pub trait DavFile: Debug + Send + Sync {
-    fn metadata<'a>(&'a mut self) -> FsFuture<Box<dyn DavMetaData>>;
-    fn write_buf<'a>(&'a mut self, buf: Box<dyn bytes::Buf + Send>) -> FsFuture<()>;
-    fn write_bytes<'a>(&'a mut self, buf: bytes::Bytes) -> FsFuture<()>;
-    fn read_bytes<'a>(&'a mut self, count: usize) -> FsFuture<bytes::Bytes>;
-    fn seek<'a>(&'a mut self, pos: SeekFrom) -> FsFuture<u64>;
-    fn flush<'a>(&'a mut self) -> FsFuture<()>;
+    fn metadata(&mut self) -> FsFuture<Box<dyn DavMetaData>>;
+    fn write_buf(&mut self, buf: Box<dyn bytes::Buf + Send>) -> FsFuture<()>;
+    fn write_bytes(&mut self, buf: bytes::Bytes) -> FsFuture<()>;
+    fn read_bytes(&mut self, count: usize) -> FsFuture<bytes::Bytes>;
+    fn seek(&mut self, pos: SeekFrom) -> FsFuture<u64>;
+    fn flush(&mut self) -> FsFuture<()>;
 }
 
 /// File metadata. Basically type, length, and some timestamps.
@@ -376,15 +375,15 @@ impl<MD: Clone + DavMetaData + 'static> BoxCloneMd for MD {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OpenOptions {
     /// open for reading
-    pub read:       bool,
+    pub read: bool,
     /// open for writing
-    pub write:      bool,
+    pub write: bool,
     /// open in write-append mode
-    pub append:     bool,
+    pub append: bool,
     /// truncate file first when writing
-    pub truncate:   bool,
+    pub truncate: bool,
     /// create file if it doesn't exist
-    pub create:     bool,
+    pub create: bool,
     /// must create new file, fail if it already exists.
     pub create_new: bool,
 }
@@ -393,33 +392,33 @@ impl OpenOptions {
     #[allow(dead_code)]
     pub(crate) fn new() -> OpenOptions {
         OpenOptions {
-            read:       false,
-            write:      false,
-            append:     false,
-            truncate:   false,
-            create:     false,
+            read: false,
+            write: false,
+            append: false,
+            truncate: false,
+            create: false,
             create_new: false,
         }
     }
 
     pub(crate) fn read() -> OpenOptions {
         OpenOptions {
-            read:       true,
-            write:      false,
-            append:     false,
-            truncate:   false,
-            create:     false,
+            read: true,
+            write: false,
+            append: false,
+            truncate: false,
+            create: false,
             create_new: false,
         }
     }
 
     pub(crate) fn write() -> OpenOptions {
         OpenOptions {
-            read:       false,
-            write:      true,
-            append:     false,
-            truncate:   false,
-            create:     false,
+            read: false,
+            write: true,
+            append: false,
+            truncate: false,
+            create: false,
             create_new: false,
         }
     }

@@ -26,18 +26,18 @@ impl crate::DavInner {
         let method = dav_method(req.method()).unwrap_or(DavMethod::Options);
         let islock = |m| m == DavMethod::Lock || m == DavMethod::Unlock;
         let mm = |v: &mut Vec<String>, m: &str, y: DavMethod| {
-            if (y == DavMethod::Options || (y != method || islock(y) != islock(method))) &&
-                (!islock(y) || self.ls.is_some()) &&
-                self.allow.map(|x| x.contains(y)).unwrap_or(true)
+            if (y == DavMethod::Options || (y != method || islock(y) != islock(method)))
+                && (!islock(y) || self.ls.is_some())
+                && self.allow.map(|x| x.contains(y)).unwrap_or(true)
             {
                 v.push(m.to_string());
             }
         };
 
-        let path = self.path(&req);
+        let path = self.path(req);
         let meta = self.fs.metadata(&path).await;
         let is_unmapped = meta.is_err();
-        let is_file = meta.and_then(|m| Ok(m.is_file())).unwrap_or_default();
+        let is_file = meta.map(|m| m.is_file()).unwrap_or_default();
         let is_star = path.is_star() && method == DavMethod::Options;
 
         let mut v = Vec::new();

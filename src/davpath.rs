@@ -14,7 +14,7 @@ use crate::DavError;
 #[derive(Clone)]
 pub struct DavPath {
     fullpath: Vec<u8>,
-    pfxlen:   Option<usize>,
+    pfxlen: Option<usize>,
 }
 
 /// Reference to DavPath, no prefix.
@@ -104,7 +104,7 @@ fn encode_path(src: &[u8]) -> Vec<u8> {
 // - do not allow NUL or '/' in segments.
 fn normalize_path(rp: &[u8]) -> Result<Vec<u8>, ParseError> {
     // must consist of printable ASCII
-    if rp.iter().any(|&x| x < 32 || x > 126) {
+    if rp.iter().any(|&x| !(32..=126).contains(&x)) {
         Err(ParseError::InvalidPath)?;
     }
 
@@ -123,10 +123,7 @@ fn normalize_path(rp: &[u8]) -> Result<Vec<u8>, ParseError> {
     }
 
     // split up in segments
-    let isdir = match rawpath.last() {
-        Some(x) if *x == b'/' => true,
-        _ => false,
-    };
+    let isdir = matches!(rawpath.last(), Some(x) if *x == b'/');
     let segments = rawpath.split(|c| *c == b'/');
     let mut v: Vec<&[u8]> = Vec::new();
     for segment in segments {
@@ -175,7 +172,7 @@ impl DavPath {
         let path = normalize_path(src.as_bytes())?;
         Ok(DavPath {
             fullpath: path.to_vec(),
-            pfxlen:   None,
+            pfxlen: None,
         })
     }
 
@@ -209,7 +206,7 @@ impl DavPath {
         let path = normalize_path(src.as_bytes())?;
         let mut davpath = DavPath {
             fullpath: path.to_vec(),
-            pfxlen:   None,
+            pfxlen: None,
         };
         davpath.set_prefix(prefix)?;
         Ok(davpath)
@@ -218,13 +215,11 @@ impl DavPath {
     /// from request.uri
     pub(crate) fn from_uri_and_prefix(uri: &http::uri::Uri, prefix: &str) -> Result<Self, ParseError> {
         match uri.path() {
-            "*" => {
-                Ok(DavPath {
-                    fullpath: b"*".to_vec(),
-                    pfxlen:   None,
-                })
-            },
-            path if path.starts_with("/") => DavPath::from_str_and_prefix(path, prefix),
+            "*" => Ok(DavPath {
+                fullpath: b"*".to_vec(),
+                pfxlen: None,
+            }),
+            path if path.starts_with('/') => DavPath::from_str_and_prefix(path, prefix),
             _ => Err(ParseError::InvalidPath),
         }
     }
@@ -233,7 +228,7 @@ impl DavPath {
     pub fn from_uri(uri: &http::uri::Uri) -> Result<Self, ParseError> {
         Ok(DavPath {
             fullpath: uri.path().as_bytes().to_vec(),
-            pfxlen:   None,
+            pfxlen: None,
         })
     }
 
@@ -262,7 +257,7 @@ impl DavPath {
     // as URL encoded string, with prefix.
     pub(crate) fn as_url_string_with_prefix_debug(&self) -> String {
         let mut p = encode_path(self.get_path());
-        if self.get_prefix().len() > 0 {
+        if !self.get_prefix().is_empty() {
             let mut u = encode_path(self.get_prefix());
             u.extend_from_slice(b"[");
             u.extend_from_slice(&p);
@@ -287,15 +282,15 @@ impl DavPath {
         let mut segs = self
             .fullpath
             .split(|&c| c == b'/')
-            .filter(|e| e.len() > 0)
+            .filter(|e| !e.is_empty())
             .collect::<Vec<&[u8]>>();
         segs.pop();
-        if segs.len() > 0 {
+        if !segs.is_empty() {
             segs.push(b"");
         }
         segs.insert(0, b"");
         DavPath {
-            pfxlen:   self.pfxlen,
+            pfxlen: self.pfxlen,
             fullpath: segs.join(&b'/').to_vec(),
         }
     }
@@ -361,7 +356,7 @@ impl DavPathRef {
     /// Used to `push()` onto a pathbuf.
     pub fn as_rel_ospath(&self) -> &Path {
         let spath = self.get_path();
-        let mut path = if spath.len() > 0 { &spath[1..] } else { spath };
+        let mut path = if !spath.is_empty() { &spath[1..] } else { spath };
         if path.ends_with(b"/") {
             path = &path[..path.len() - 1];
         }
@@ -392,9 +387,9 @@ impl DavPathRef {
         let segs = self
             .get_path()
             .split(|&c| c == b'/')
-            .filter(|e| e.len() > 0)
+            .filter(|e| !e.is_empty())
             .collect::<Vec<&[u8]>>();
-        if segs.len() > 0 {
+        if !segs.is_empty() {
             segs[segs.len() - 1]
         } else {
             b""

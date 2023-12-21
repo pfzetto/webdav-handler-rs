@@ -32,8 +32,8 @@ const READ_BUF_SIZE: usize = 16384;
 
 impl crate::DavInner {
     pub(crate) async fn handle_get(&self, req: &Request<()>) -> DavResult<Response<Body>> {
-        let head = req.method() == &http::Method::HEAD;
-        let mut path = self.path(&req);
+        let head = req.method() == http::Method::HEAD;
+        let mut path = self.path(req);
         let mut is_hbs = false;
 
         // check if it's a directory.
@@ -107,7 +107,7 @@ impl crate::DavInner {
         res.headers_mut().typed_insert(headers::AcceptRanges::bytes());
 
         // handle the if-headers.
-        if let Some(s) = conditional::if_match(&req, Some(&meta), &self.fs, &self.ls, &path).await {
+        if let Some(s) = conditional::if_match(req, Some(&meta), &self.fs, &self.ls, &path).await {
             *res.status_mut() = s;
             no_body = true;
             do_range = false;
@@ -118,7 +118,7 @@ impl crate::DavInner {
             if let Some(r) = req.headers().typed_get::<headers::Range>() {
                 trace!("handle_gethead: range header {:?}", r);
                 use std::ops::Bound::*;
-                for range in r.iter() {
+                for range in r.satisfiable_ranges(u64::MAX) {
                     let (start, mut count, valid) = match range {
                         (Included(s), Included(e)) if e >= s => (s, e - s + 1, true),
                         (Included(s), Unbounded) if s <= len => (s, len - s, true),
@@ -141,9 +141,13 @@ impl crate::DavInner {
             }
         }
 
-        if ranges.len() > 0 {
+        if !ranges.is_empty() {
             // seek to beginning of the first range.
-            if let Err(_) = file.seek(std::io::SeekFrom::Start(ranges[0].start)).await {
+            if file
+                .seek(std::io::SeekFrom::Start(ranges[0].start))
+                .await
+                .is_err()
+            {
                 let r = format!("bytes */{}", len);
                 res.headers_mut().insert("Content-Range", r.parse().unwrap());
                 *res.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
@@ -152,7 +156,7 @@ impl crate::DavInner {
             }
         }
 
-        if ranges.len() > 0 {
+        if !ranges.is_empty() {
             curpos = ranges[0].start;
 
             *res.status_mut() = StatusCode::PARTIAL_CONTENT;
@@ -226,7 +230,7 @@ impl crate::DavInner {
                             len
                         );
                         let _ = writeln!(hdrs, "Content-Type: {}", content_type);
-                        let _ = writeln!(hdrs, "");
+                        let _ = writeln!(hdrs);
                         tx.send(Bytes::from(hdrs)).await;
                     }
 
@@ -234,7 +238,7 @@ impl crate::DavInner {
                     while count > 0 {
                         let blen = cmp::min(count, READ_BUF_SIZE as u64) as usize;
                         let mut buf = file.read_bytes(blen).await?;
-                        if buf.len() == 0 {
+                        if buf.is_empty() {
                             // this is a cop out. if the file got truncated, just
                             // return zeroed bytes instead of file content.
                             let n = if count > 4096 { 4096 } else { count as usize };
@@ -259,7 +263,7 @@ impl crate::DavInner {
 
     pub(crate) async fn handle_autoindex(&self, req: &Request<()>, head: bool) -> DavResult<Response<Body>> {
         let mut res = Response::new(Body::empty());
-        let path = self.path(&req);
+        let path = self.path(req);
 
         // Is PROPFIND explicitly allowed?
         let allow_propfind = self
@@ -312,7 +316,7 @@ impl crate::DavInner {
                         dirents.push(Dirent {
                             path: npath.with_prefix().as_url_string(),
                             name: String::from_utf8_lossy(&name).to_string(),
-                            meta: meta,
+                            meta,
                         });
                     }
                 }
@@ -387,7 +391,9 @@ impl crate::DavInner {
                 tx.send(Bytes::from(w)).await;
 
                 for dirent in &dirents {
-                    let modified = dirent.meta.modified()
+                    let modified = dirent
+                        .meta
+                        .modified()
                         .map(|t| systemtime_to_localtime(t, utcoffset))
                         .unwrap_or("".to_string());
                     let size = match dirent.meta.is_file() {
@@ -432,13 +438,13 @@ fn display_size(size: u64) -> String {
 fn display_path(path: &DavPath) -> String {
     let path_dsp = String::from_utf8_lossy(path.with_prefix().as_bytes());
     let path_url = path.with_prefix().as_url_string();
-    let dpath_segs = path_dsp.split("/").filter(|s| !s.is_empty()).collect::<Vec<_>>();
-    let upath_segs = path_url.split("/").filter(|s| !s.is_empty()).collect::<Vec<_>>();
+    let dpath_segs = path_dsp.split('/').filter(|s| !s.is_empty()).collect::<Vec<_>>();
+    let upath_segs = path_url.split('/').filter(|s| !s.is_empty()).collect::<Vec<_>>();
     let mut dpath = String::new();
     let mut upath = String::new();
 
-    if dpath_segs.len() == 0 {
-        dpath.push_str("/");
+    if dpath_segs.is_empty() {
+        dpath.push('/');
     } else {
         dpath.push_str("<a href = \"/\">/</a>");
     }
@@ -469,8 +475,7 @@ use headers::{authorization::Basic, Authorization};
 async fn read_handlebars(
     req: &Request<()>,
     mut file: Box<dyn DavFile>,
-) -> DavResult<(Box<dyn DavFile>, Box<dyn DavMetaData>)>
-{
+) -> DavResult<(Box<dyn DavFile>, Box<dyn DavMetaData>)> {
     let hbs = Handlebars::new();
     let mut vars = HashMap::new();
     let headers = req.headers();
@@ -490,12 +495,9 @@ async fn read_handlebars(
             }
         }
     }
-    match headers.typed_get::<Authorization<Basic>>() {
-        Some(Authorization(basic)) => {
-            vars.insert("AUTH_TYPE".to_string(), "Basic".to_string());
-            vars.insert("REMOTE_USER".to_string(), basic.username().to_string());
-        },
-        _ => {},
+    if let Some(Authorization(basic)) = headers.typed_get::<Authorization<Basic>>() {
+        vars.insert("AUTH_TYPE".to_string(), "Basic".to_string());
+        vars.insert("REMOTE_USER".to_string(), basic.username().to_string());
     }
 
     // Render.
@@ -503,7 +505,7 @@ async fn read_handlebars(
         .render_template(data, &vars)
         .map_err(|_| DavError::Status(StatusCode::INTERNAL_SERVER_ERROR))?;
 
-    let mut hbsfile = HbsFile::new(result);
+    let mut hbsfile = HbsFile::new_boxed(result);
     let hbsmeta = hbsfile.metadata().await?;
     Ok((hbsfile, hbsmeta))
 }
@@ -511,7 +513,7 @@ async fn read_handlebars(
 #[derive(Clone, Debug)]
 struct HbsMeta {
     mtime: SystemTime,
-    size:  u64,
+    size: u64,
 }
 
 impl DavMetaData for HbsMeta {
@@ -535,29 +537,32 @@ impl DavMetaData for HbsMeta {
 #[derive(Clone, Debug)]
 struct HbsFile {
     meta: HbsMeta,
-    pos:  usize,
+    pos: usize,
     data: Vec<u8>,
 }
 
 impl HbsFile {
-    fn new(data: String) -> Box<dyn DavFile> {
-        Box::new(HbsFile {
+    fn new(data: String) -> Self {
+        Self {
             meta: HbsMeta {
                 mtime: SystemTime::now(),
-                size:  data.len() as u64,
+                size: data.len() as u64,
             },
             data: data.into_bytes(),
-            pos:  0,
-        })
+            pos: 0,
+        }
+    }
+    fn new_boxed(data: String) -> Box<dyn DavFile> {
+        Box::new(Self::new(data))
     }
 }
 
 impl DavFile for HbsFile {
-    fn metadata<'a>(&'a mut self) -> FsFuture<Box<dyn DavMetaData>> {
+    fn metadata(&mut self) -> FsFuture<Box<dyn DavMetaData>> {
         async move { Ok(Box::new(self.meta.clone()) as Box<dyn DavMetaData>) }.boxed()
     }
 
-    fn read_bytes<'a>(&'a mut self, count: usize) -> FsFuture<Bytes> {
+    fn read_bytes(&mut self, count: usize) -> FsFuture<Bytes> {
         async move {
             let start = self.pos;
             let end = std::cmp::min(self.pos + count, self.data.len());
@@ -568,7 +573,7 @@ impl DavFile for HbsFile {
         .boxed()
     }
 
-    fn seek<'a>(&'a mut self, pos: SeekFrom) -> FsFuture<u64> {
+    fn seek(&mut self, pos: SeekFrom) -> FsFuture<u64> {
         async move {
             let (start, offset): (u64, i64) = match pos {
                 SeekFrom::Start(npos) => (0, npos as i64),
@@ -588,15 +593,15 @@ impl DavFile for HbsFile {
         .boxed()
     }
 
-    fn write_buf<'a>(&'a mut self, _buf: Box<dyn bytes::Buf + Send>) -> FsFuture<()> {
+    fn write_buf(&mut self, _buf: Box<dyn bytes::Buf + Send>) -> FsFuture<()> {
         Box::pin(future::ready(Err(FsError::NotImplemented)))
     }
 
-    fn write_bytes<'a>(&'a mut self, _buf: bytes::Bytes) -> FsFuture<()> {
+    fn write_bytes(&mut self, _buf: bytes::Bytes) -> FsFuture<()> {
         Box::pin(future::ready(Err(FsError::NotImplemented)))
     }
 
-    fn flush<'a>(&'a mut self) -> FsFuture<()> {
+    fn flush(&mut self) -> FsFuture<()> {
         Box::pin(future::ready(Ok(())))
     }
 }

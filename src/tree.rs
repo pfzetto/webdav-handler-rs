@@ -9,7 +9,7 @@ use crate::FsResult;
 #[derive(Debug)]
 /// A tree contains a bunch of nodes.
 pub struct Tree<K: Eq + Hash, D> {
-    nodes:   HashMap<u64, Node<K, D>>,
+    nodes: HashMap<u64, Node<K, D>>,
     node_id: u64,
 }
 
@@ -19,11 +19,11 @@ pub const ROOT_ID: u64 = 1;
 #[derive(Debug)]
 /// Node itself. "data" contains user-modifiable data.
 pub struct Node<K: Eq + Hash, D> {
-    pub data:  D,
+    pub data: D,
     #[allow(dead_code)]
-    id:        u64,
+    id: u64,
     parent_id: u64,
-    children:  HashMap<K, u64>,
+    children: HashMap<K, u64>,
 }
 
 #[derive(Debug)]
@@ -34,7 +34,7 @@ impl<K: Eq + Hash + Debug + Clone, D: Debug> Tree<K, D> {
     /// Get new tree and initialize the root with 'data'.
     pub fn new(data: D) -> Tree<K, D> {
         let mut t = Tree {
-            nodes:   HashMap::new(),
+            nodes: HashMap::new(),
             node_id: ROOT_ID,
         };
         t.new_node(99999999, data);
@@ -45,10 +45,10 @@ impl<K: Eq + Hash + Debug + Clone, D: Debug> Tree<K, D> {
         let id = self.node_id;
         self.node_id += 1;
         let node = Node {
-            id:        id,
+            id,
             parent_id: parent,
-            data:      data,
-            children:  HashMap::new(),
+            data,
+            children: HashMap::new(),
         };
         self.nodes.insert(id, node);
         id
@@ -145,7 +145,7 @@ impl<K: Eq + Hash + Debug + Clone, D: Debug> Tree<K, D> {
     pub fn delete_node(&mut self, id: u64) -> FsResult<Node<K, D>> {
         {
             let n = self.nodes.get(&id).ok_or(FsError::NotFound)?;
-            if n.children.len() > 0 {
+            if !n.children.is_empty() {
                 return Err(FsError::Forbidden);
             }
         }
@@ -173,7 +173,7 @@ impl<K: Eq + Hash + Debug + Clone, D: Debug> Tree<K, D> {
             let pnode = self.nodes.get(&new_parent).ok_or(FsError::NotFound)?;
             if let Some(cid) = pnode.children.get(&new_name) {
                 let cnode = self.nodes.get(cid).unwrap();
-                if !overwrite || cnode.children.len() > 0 {
+                if !overwrite || cnode.children.is_empty() {
                     return Err(FsError::Exists);
                 }
                 Some(*cid)

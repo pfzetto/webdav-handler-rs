@@ -1,7 +1,6 @@
 use std::borrow::Cow;
 use std::io::{Read, Write};
 
-use xml;
 use xml::common::XmlVersion;
 use xml::writer::EventWriter;
 use xml::writer::XmlEvent as XmlWEvent;
@@ -17,7 +16,7 @@ pub(crate) trait ElementExt {
     /// Builder.
     fn ns<S: Into<String>>(self, prefix: S, namespace: S) -> Self;
     /// Builder.
-    fn text<'a, T: Into<String>>(self, t: T) -> Self;
+    fn text<T: Into<String>>(self, t: T) -> Self;
     /// Like parse, but returns DavError.
     fn parse2<R: Read>(r: R) -> Result<Element, DavError>;
     /// Add a child element.
@@ -69,11 +68,9 @@ impl ElementExt for Element {
     }
 
     fn child_elems_into_iter(self) -> Box<dyn Iterator<Item = Element>> {
-        let iter = self.children.into_iter().filter_map(|n| {
-            match n {
-                XMLNode::Element(e) => Some(e),
-                _ => None,
-            }
+        let iter = self.children.into_iter().filter_map(|n| match n {
+            XMLNode::Element(e) => Some(e),
+            _ => None,
         });
         Box::new(iter)
     }
@@ -86,11 +83,9 @@ impl ElementExt for Element {
     fn take_child_elems(self) -> Vec<Element> {
         self.children
             .into_iter()
-            .filter_map(|n| {
-                match n {
-                    XMLNode::Element(e) => Some(e),
-                    _ => None,
-                }
+            .filter_map(|n| match n {
+                XMLNode::Element(e) => Some(e),
+                _ => None,
             })
             .collect()
     }
@@ -125,7 +120,7 @@ impl ElementExt for Element {
         let mut attributes = Vec::with_capacity(self.attributes.len());
         for (k, v) in &self.attributes {
             attributes.push(Attribute {
-                name:  Name::local(k),
+                name: Name::local(k),
                 value: v,
             });
         }
@@ -148,16 +143,12 @@ impl ElementExt for Element {
                 XMLNode::Text(text) => emitter.write(XmlEvent::Characters(text))?,
                 XMLNode::Comment(comment) => emitter.write(XmlEvent::Comment(comment))?,
                 XMLNode::CData(comment) => emitter.write(XmlEvent::CData(comment))?,
-                XMLNode::ProcessingInstruction(name, data) => {
-                    match data.to_owned() {
-                        Some(string) => {
-                            emitter.write(XmlEvent::ProcessingInstruction {
-                                name,
-                                data: Some(&string),
-                            })?
-                        },
-                        None => emitter.write(XmlEvent::ProcessingInstruction { name, data: None })?,
-                    }
+                XMLNode::ProcessingInstruction(name, data) => match data.to_owned() {
+                    Some(string) => emitter.write(XmlEvent::ProcessingInstruction {
+                        name,
+                        data: Some(&string),
+                    })?,
+                    None => emitter.write(XmlEvent::ProcessingInstruction { name, data: None })?,
                 },
             }
             // elem.write_ev(emitter)?;
@@ -178,8 +169,8 @@ pub(crate) fn emitter<W: Write>(w: W) -> DavResult<EventWriter<W>> {
         },
     );
     emitter.write(XmlWEvent::StartDocument {
-        version:    XmlVersion::Version10,
-        encoding:   Some("utf-8"),
+        version: XmlVersion::Version10,
+        encoding: Some("utf-8"),
         standalone: None,
     })?;
     Ok(emitter)

@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::{self, Cursor};
 
-use bytes::Bytes;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use headers::HeaderMapExt;
 use http::{Request, Response, StatusCode};
@@ -25,15 +24,15 @@ use crate::fs::*;
 use crate::handle_lock::{list_lockdiscovery, list_supportedlock};
 use crate::ls::*;
 use crate::time::{systemtime_to_httpdate, systemtime_to_rfc3339};
-use crate::util::{MemBuffer, dav_xml_error};
+use crate::util::{dav_xml_error, MemBuffer};
 use crate::{DavInner, DavResult};
 
-const NS_APACHE_URI: &'static str = "http://apache.org/dav/props/";
-const NS_DAV_URI: &'static str = "DAV:";
-const NS_MS_URI: &'static str = "urn:schemas-microsoft-com:";
+const NS_APACHE_URI: &str = "http://apache.org/dav/props/";
+const NS_DAV_URI: &str = "DAV:";
+const NS_MS_URI: &str = "urn:schemas-microsoft-com:";
 
 // list returned by PROPFIND <propname/>.
-const PROPNAME_STR: &'static [&'static str] = &[
+const PROPNAME_STR: &[&str] = &[
     "D:creationdate",
     "D:displayname",
     "D:getcontentlanguage",
@@ -51,7 +50,7 @@ const PROPNAME_STR: &'static [&'static str] = &[
 ];
 
 // properties returned by PROPFIND <allprop/> or empty body.
-const ALLPROP_STR: &'static [&'static str] = &[
+const ALLPROP_STR: &[&str] = &[
     "D:creationdate",
     "D:displayname",
     "D:getcontentlanguage",
@@ -65,7 +64,7 @@ const ALLPROP_STR: &'static [&'static str] = &[
 ];
 
 // properties returned by PROPFIND with empty body for Microsoft clients.
-const MS_ALLPROP_STR: &'static [&'static str] = &[
+const MS_ALLPROP_STR: &[&str] = &[
     "D:creationdate",
     "D:displayname",
     "D:getcontentlanguage",
@@ -92,25 +91,25 @@ type Emitter = EventWriter<MemBuffer>;
 type Sender = crate::async_stream::Sender<bytes::Bytes, io::Error>;
 
 struct StatusElement {
-    status:  StatusCode,
+    status: StatusCode,
     element: Element,
 }
 
 struct PropWriter {
-    emitter:   Emitter,
-    tx:        Option<Sender>,
-    name:      String,
-    props:     Vec<Element>,
-    fs:        Box<dyn DavFileSystem>,
-    ls:        Option<Box<dyn DavLockSystem>>,
+    emitter: Emitter,
+    tx: Option<Sender>,
+    name: String,
+    props: Vec<Element>,
+    fs: Box<dyn DavFileSystem>,
+    ls: Option<Box<dyn DavLockSystem>>,
     useragent: String,
-    q_cache:   QuotaCache,
+    q_cache: QuotaCache,
 }
 
 #[derive(Default, Clone, Copy)]
 struct QuotaCache {
     q_state: u32,
-    q_used:  u64,
+    q_used: u64,
     q_total: Option<u64>,
 }
 
@@ -118,7 +117,7 @@ fn init_staticprop(p: &[&str]) -> Vec<Element> {
     let mut v = Vec::new();
     for a in p {
         let mut e = Element::new2(*a);
-        e.namespace = match e.prefix.as_ref().map(|x| x.as_str()) {
+        e.namespace = match e.prefix.as_deref() {
             Some("D") => Some(NS_DAV_URI.to_string()),
             Some("A") => Some(NS_APACHE_URI.to_string()),
             Some("Z") => Some(NS_MS_URI.to_string()),
@@ -134,8 +133,7 @@ impl DavInner {
         self,
         req: &Request<()>,
         xmldata: &[u8],
-    ) -> DavResult<Response<Body>>
-    {
+    ) -> DavResult<Response<Body>> {
         // No checks on If: and If-* headers here, because I do not see
         // the point and there's nothing in RFC4918 that indicates we should.
 
@@ -156,25 +154,25 @@ impl DavInner {
                 }
                 davheaders::Depth::Infinity
             },
-            Some(d) => d.clone(),
+            Some(d) => d,
         };
 
         // path and meta
-        let mut path = self.path(&req);
+        let mut path = self.path(req);
         let meta = self.fs.metadata(&path).await?;
         let meta = self.fixpath(&mut res, &mut path, meta);
 
         let mut root = None;
-        if xmldata.len() > 0 {
+        if !xmldata.is_empty() {
             root = match Element::parse(Cursor::new(xmldata)) {
                 Ok(t) => {
-                    if t.name == "propfind" && t.namespace.as_ref().map(|s| s.as_str()) == Some("DAV:") {
+                    if t.name == "propfind" && t.namespace.as_deref() == Some("DAV:") {
                         Some(t)
                     } else {
-                        return Err(DavError::XmlParseError.into());
+                        return Err(DavError::XmlParseError);
                     }
                 },
-                Err(_) => return Err(DavError::XmlParseError.into()),
+                Err(_) => return Err(DavError::XmlParseError),
             };
         }
 
@@ -188,37 +186,33 @@ impl DavInner {
                     .child_elems_into_iter()
                     .find(|e| e.name == "propname" || e.name == "prop" || e.name == "allprop")
                 {
-                    Some(elem) => {
-                        match elem.name.as_str() {
-                            "propname" => ("propname", Vec::new()),
-                            "prop" => ("prop", elem.take_child_elems()),
-                            "allprop" => ("allprop", includes),
-                            _ => return Err(DavError::XmlParseError.into()),
-                        }
+                    Some(elem) => match elem.name.as_str() {
+                        "propname" => ("propname", Vec::new()),
+                        "prop" => ("prop", elem.take_child_elems()),
+                        "allprop" => ("allprop", includes),
+                        _ => return Err(DavError::XmlParseError),
                     },
-                    None => return Err(DavError::XmlParseError.into()),
+                    None => return Err(DavError::XmlParseError),
                 }
             },
         };
 
         trace!("propfind: type request: {}", name);
 
-        let mut pw = PropWriter::new(&req, &mut res, name, props, &self.fs, self.ls.as_ref())?;
+        let mut pw = PropWriter::new(req, &mut res, name, props, &self.fs, self.ls.as_ref())?;
 
-        *res.body_mut() = Body::from(AsyncStream::new(|tx| {
-            async move {
-                pw.set_tx(tx);
-                let is_dir = meta.is_dir();
-                pw.write_props(&path, meta).await?;
-                pw.flush().await?;
+        *res.body_mut() = Body::from(AsyncStream::new(|tx| async move {
+            pw.set_tx(tx);
+            let is_dir = meta.is_dir();
+            pw.write_props(&path, meta).await?;
+            pw.flush().await?;
 
-                if is_dir && depth != davheaders::Depth::Zero {
-                    let _ = self.propfind_directory(&path, depth, &mut pw).await;
-                }
-                pw.close().await?;
-
-                Ok(())
+            if is_dir && depth != davheaders::Depth::Zero {
+                let _ = self.propfind_directory(&path, depth, &mut pw).await;
             }
+            pw.close().await?;
+
+            Ok(())
         }));
 
         Ok(res)
@@ -229,8 +223,7 @@ impl DavInner {
         path: &'a DavPath,
         depth: davheaders::Depth,
         propwriter: &'a mut PropWriter,
-    ) -> BoxFuture<'a, DavResult<()>>
-    {
+    ) -> BoxFuture<'a, DavResult<()>> {
         async move {
             let readdir_meta = match self.hide_symlinks {
                 Some(true) | None => ReadDirMeta::DataSymlink,
@@ -277,7 +270,7 @@ impl DavInner {
     // this wasnt't  a live property (or, if we want it handled
     // as a dead property, e.g. DAV:displayname).
     fn liveprop_set(&self, prop: &Element, can_deadprop: bool) -> StatusCode {
-        match prop.namespace.as_ref().map(|x| x.as_str()) {
+        match prop.namespace.as_deref() {
             Some(NS_DAV_URI) => {
                 match prop.name.as_str() {
                     "getcontentlanguage" => {
@@ -332,10 +325,10 @@ impl DavInner {
             },
             Some(NS_MS_URI) => {
                 match prop.name.as_str() {
-                    "Win32CreationTime" |
-                    "Win32FileAttributes" |
-                    "Win32LastAccessTime" |
-                    "Win32LastModifiedTime" => {
+                    "Win32CreationTime"
+                    | "Win32FileAttributes"
+                    | "Win32LastAccessTime"
+                    | "Win32LastModifiedTime" => {
                         if prop.get_text().is_none() || prop.has_child_elems() {
                             return StatusCode::CONFLICT;
                         }
@@ -354,18 +347,16 @@ impl DavInner {
     // In general, live properties cannot be removed, with the
     // exception of getcontentlanguage and displayname.
     fn liveprop_remove(&self, prop: &Element, can_deadprop: bool) -> StatusCode {
-        match prop.namespace.as_ref().map(|x| x.as_str()) {
-            Some(NS_DAV_URI) => {
-                match prop.name.as_str() {
-                    "getcontentlanguage" | "displayname" => {
-                        if can_deadprop {
-                            StatusCode::OK
-                        } else {
-                            StatusCode::FORBIDDEN
-                        }
-                    },
-                    _ => StatusCode::FORBIDDEN,
-                }
+        match prop.namespace.as_deref() {
+            Some(NS_DAV_URI) => match prop.name.as_str() {
+                "getcontentlanguage" | "displayname" => {
+                    if can_deadprop {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::FORBIDDEN
+                    }
+                },
+                _ => StatusCode::FORBIDDEN,
             },
             Some(NS_APACHE_URI) | Some(NS_MS_URI) => StatusCode::FORBIDDEN,
             _ => StatusCode::CONTINUE,
@@ -376,17 +367,16 @@ impl DavInner {
         self,
         req: &Request<()>,
         xmldata: &[u8],
-    ) -> DavResult<Response<Body>>
-    {
+    ) -> DavResult<Response<Body>> {
         let mut res = Response::new(Body::empty());
 
         // file must exist.
-        let mut path = self.path(&req);
+        let mut path = self.path(req);
         let meta = self.fs.metadata(&path).await?;
         let meta = self.fixpath(&mut res, &mut path, meta);
 
         // check the If and If-* headers.
-        let tokens = match if_match_get_tokens(&req, Some(&meta), &self.fs, &self.ls, &path).await {
+        let tokens = match if_match_get_tokens(req, Some(&meta), &self.fs, &self.ls, &path).await {
             Ok(t) => t,
             Err(s) => return Err(s.into()),
         };
@@ -394,14 +384,14 @@ impl DavInner {
         // if locked check if we hold that lock.
         if let Some(ref locksystem) = self.ls {
             let t = tokens.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
-            let principal = self.principal.as_ref().map(|s| s.as_str());
+            let principal = self.principal.as_deref();
             if let Err(_l) = locksystem.check(&path, principal, false, false, t) {
                 return Err(StatusCode::LOCKED.into());
             }
         }
 
         trace!(target: "xml", "proppatch input:\n{}]\n",
-               std::string::String::from_utf8_lossy(&xmldata));
+               std::string::String::from_utf8_lossy(xmldata));
 
         // parse xml
         let tree = Element::parse2(Cursor::new(xmldata))?;
@@ -423,17 +413,13 @@ impl DavInner {
                 .flat_map(|e| e.child_elems_iter())
             {
                 match elem.name.as_str() {
-                    "set" => {
-                        match self.liveprop_set(&n, can_deadprop) {
-                            StatusCode::CONTINUE => patch.push((true, element_to_davprop_full(&n))),
-                            s => ret.push((s, element_to_davprop(&n))),
-                        }
+                    "set" => match self.liveprop_set(n, can_deadprop) {
+                        StatusCode::CONTINUE => patch.push((true, element_to_davprop_full(n))),
+                        s => ret.push((s, element_to_davprop(n))),
                     },
-                    "remove" => {
-                        match self.liveprop_remove(&n, can_deadprop) {
-                            StatusCode::CONTINUE => patch.push((false, element_to_davprop(&n))),
-                            s => ret.push((s, element_to_davprop(&n))),
-                        }
+                    "remove" => match self.liveprop_remove(n, can_deadprop) {
+                        StatusCode::CONTINUE => patch.push((false, element_to_davprop(n))),
+                        s => ret.push((s, element_to_davprop(n))),
                     },
                     _ => {},
                 }
@@ -441,7 +427,7 @@ impl DavInner {
         }
 
         // if any set/remove failed, stop processing here.
-        if ret.iter().any(|&(ref s, _)| s != &StatusCode::OK) {
+        if ret.iter().any(|(s, _)| s != &StatusCode::OK) {
             ret = ret
                 .into_iter()
                 .map(|(s, p)| {
@@ -453,7 +439,7 @@ impl DavInner {
                 })
                 .collect::<Vec<_>>();
             ret.extend(patch.into_iter().map(|(_, p)| (StatusCode::FAILED_DEPENDENCY, p)));
-        } else if patch.len() > 0 {
+        } else if !patch.is_empty() {
             // hmmm ... we assume nothing goes wrong here at the
             // moment. if it does, we should roll back the earlier
             // made changes to live props, but come on, we're not
@@ -465,22 +451,18 @@ impl DavInner {
         // group by statuscode.
         let mut hm = HashMap::new();
         for (code, prop) in ret.into_iter() {
-            if !hm.contains_key(&code) {
-                hm.insert(code, Vec::new());
-            }
+            hm.entry(code).or_insert_with(Vec::new);
             let v = hm.get_mut(&code).unwrap();
             v.push(davprop_to_element(prop));
         }
 
         // And reply.
-        let mut pw = PropWriter::new(&req, &mut res, "propertyupdate", Vec::new(), &self.fs, None)?;
-        *res.body_mut() = Body::from(AsyncStream::new(|tx| {
-            async move {
-                pw.set_tx(tx);
-                pw.write_propresponse(&path, hm)?;
-                pw.close().await?;
-                Ok::<_, io::Error>(())
-            }
+        let mut pw = PropWriter::new(req, &mut res, "propertyupdate", Vec::new(), &self.fs, None)?;
+        *res.body_mut() = Body::from(AsyncStream::new(|tx| async move {
+            pw.set_tx(tx);
+            pw.write_propresponse(&path, hm)?;
+            pw.close().await?;
+            Ok::<_, io::Error>(())
         }));
 
         Ok(res)
@@ -495,8 +477,7 @@ impl PropWriter {
         mut props: Vec<Element>,
         fs: &Box<dyn DavFileSystem>,
         ls: Option<&Box<dyn DavLockSystem>>,
-    ) -> DavResult<PropWriter>
-    {
+    ) -> DavResult<PropWriter> {
         let contenttype = "application/xml; charset=utf-8".parse().unwrap();
         res.headers_mut().insert("content-type", contenttype);
         *res.status_mut() = StatusCode::MULTI_STATUS;
@@ -511,8 +492,8 @@ impl PropWriter {
             },
         );
         emitter.write(XmlWEvent::StartDocument {
-            version:    XmlVersion::Version10,
-            encoding:   Some("utf-8"),
+            version: XmlVersion::Version10,
+            encoding: Some("utf-8"),
             standalone: None,
         })?;
 
@@ -551,7 +532,7 @@ impl PropWriter {
             let mut a = false;
             let mut m = false;
             for prop in &props {
-                match prop.namespace.as_ref().map(|x| x.as_str()) {
+                match prop.namespace.as_deref() {
                     Some(NS_APACHE_URI) => a = true,
                     Some(NS_MS_URI) => m = true,
                     _ => {},
@@ -567,14 +548,14 @@ impl PropWriter {
         emitter.write(ev)?;
 
         Ok(PropWriter {
-            emitter:   emitter,
-            tx:        None,
-            name:      name.to_string(),
-            props:     props,
-            fs:        fs.clone(),
-            ls:        ls.map(|ls| ls.clone()),
+            emitter,
+            tx: None,
+            name: name.to_string(),
+            props,
+            fs: fs.clone(),
+            ls: ls.cloned(),
             useragent: ua.to_string(),
-            q_cache:   Default::default(),
+            q_cache: Default::default(),
         })
     }
 
@@ -583,23 +564,25 @@ impl PropWriter {
     }
 
     fn build_elem<T>(&self, content: bool, pfx: &str, e: &Element, text: T) -> DavResult<StatusElement>
-    where T: Into<String> {
+    where
+        T: Into<String>,
+    {
         let mut elem = Element {
-            prefix:     Some(pfx.to_string()),
-            namespace:  None,
+            prefix: Some(pfx.to_string()),
+            namespace: None,
             namespaces: None,
-            name:       e.name.clone(),
+            name: e.name.clone(),
             attributes: HashMap::new(),
-            children:   Vec::new(),
+            children: Vec::new(),
         };
         if content {
             let t: String = text.into();
-            if t != "" {
+            if !t.is_empty() {
                 elem.children.push(XMLNode::Text(t));
             }
         }
         Ok(StatusElement {
-            status:  StatusCode::OK,
+            status: StatusCode::OK,
             element: elem,
         })
     }
@@ -609,8 +592,7 @@ impl PropWriter {
         qc: &'a mut QuotaCache,
         _path: &'a DavPath,
         meta: &'a dyn DavMetaData,
-    ) -> FsResult<(u64, Option<u64>)>
-    {
+    ) -> FsResult<(u64, Option<u64>)> {
         // only on collections.
         if !meta.is_dir() {
             return Err(FsError::NotFound);
@@ -651,14 +633,13 @@ impl PropWriter {
         meta: &'a dyn DavMetaData,
         qc: &'a mut QuotaCache,
         docontent: bool,
-    ) -> DavResult<StatusElement>
-    {
+    ) -> DavResult<StatusElement> {
         // in some cases, a live property might be stored in the
         // dead prop database, like DAV:displayname.
         let mut try_deadprop = false;
         let mut pfx = "";
 
-        match prop.namespace.as_ref().map(|x| x.as_str()) {
+        match prop.namespace.as_deref() {
             Some(NS_DAV_URI) => {
                 pfx = "D";
                 match prop.name.as_str() {
@@ -712,31 +693,31 @@ impl PropWriter {
                             elem.children.push(XMLNode::Element(dir));
                         }
                         return Ok(StatusElement {
-                            status:  StatusCode::OK,
+                            status: StatusCode::OK,
                             element: elem,
                         });
                     },
                     "supportedlock" => {
                         return Ok(StatusElement {
-                            status:  StatusCode::OK,
+                            status: StatusCode::OK,
                             element: list_supportedlock(self.ls.as_ref()),
                         });
                     },
                     "lockdiscovery" => {
                         return Ok(StatusElement {
-                            status:  StatusCode::OK,
+                            status: StatusCode::OK,
                             element: list_lockdiscovery(self.ls.as_ref(), path),
                         });
                     },
                     "quota-available-bytes" => {
-                        let mut qc = qc;
-                        if let Ok((_, Some(avail))) = self.get_quota(&mut qc, path, meta).await {
+                        let qc = qc;
+                        if let Ok((_, Some(avail))) = self.get_quota(qc, path, meta).await {
                             return self.build_elem(docontent, pfx, prop, avail.to_string());
                         }
                     },
                     "quota-used-bytes" => {
-                        let mut qc = qc;
-                        if let Ok((used, _)) = self.get_quota(&mut qc, path, meta).await {
+                        let qc = qc;
+                        if let Ok((used, _)) = self.get_quota(qc, path, meta).await {
                             let used = if self.useragent.contains("WebDAVFS") {
                                 // Need this on MacOs, otherwise the value is off
                                 // by a factor of 10 or so .. ?!?!!?
@@ -827,19 +808,19 @@ impl PropWriter {
             if let Ok(xml) = self.fs.get_prop(path, dprop).await {
                 if let Ok(e) = Element::parse(Cursor::new(xml)) {
                     return Ok(StatusElement {
-                        status:  StatusCode::OK,
+                        status: StatusCode::OK,
                         element: e,
                     });
                 }
             }
         }
-        let prop = if pfx != "" {
+        let prop = if !pfx.is_empty() {
             self.build_elem(false, pfx, prop, "").map(|s| s.element).unwrap()
         } else {
             prop.clone()
         };
         Ok(StatusElement {
-            status:  StatusCode::NOT_FOUND,
+            status: StatusCode::NOT_FOUND,
             element: prop,
         })
     }
@@ -848,8 +829,7 @@ impl PropWriter {
         &'a mut self,
         path: &'a DavPath,
         meta: Box<dyn DavMetaData + 'static>,
-    ) -> Result<(), DavError>
-    {
+    ) -> Result<(), DavError> {
         // A HashMap<StatusCode, Vec<Element>> for the result.
         let mut props = HashMap::new();
 
@@ -873,15 +853,14 @@ impl PropWriter {
             }
         }
 
-        Ok::<(), DavError>(self.write_propresponse(path, props)?)
+        self.write_propresponse(path, props)
     }
 
     pub fn write_propresponse(
         &mut self,
         path: &DavPath,
         props: HashMap<StatusCode, Vec<Element>>,
-    ) -> Result<(), DavError>
-    {
+    ) -> Result<(), DavError> {
         self.emitter.write(XmlWEvent::start_element("D:response"))?;
         let p = path.with_prefix().as_url_string();
         Element::new2("D:href").text(p).write_ev(&mut self.emitter)?;
@@ -909,7 +888,7 @@ impl PropWriter {
 
     pub async fn flush(&mut self) -> DavResult<()> {
         let buffer = self.emitter.inner_mut().take();
-        self.tx.as_mut().unwrap().send(Bytes::from(buffer)).await;
+        self.tx.as_mut().unwrap().send(buffer).await;
         Ok(())
     }
 
@@ -920,9 +899,7 @@ impl PropWriter {
 }
 
 fn add_sc_elem(hm: &mut HashMap<StatusCode, Vec<Element>>, sc: StatusCode, e: Element) {
-    if !hm.contains_key(&sc) {
-        hm.insert(sc, Vec::new());
-    }
+    hm.entry(sc).or_insert_with(Vec::new);
     hm.get_mut(&sc).unwrap().push(e)
 }
 
@@ -931,19 +908,19 @@ fn element_to_davprop_full(elem: &Element) -> DavProp {
     elem.write_ev(&mut emitter).ok();
     let xml = emitter.into_inner().into_inner();
     DavProp {
-        name:      elem.name.clone(),
-        prefix:    elem.prefix.clone(),
+        name: elem.name.clone(),
+        prefix: elem.prefix.clone(),
         namespace: elem.namespace.clone(),
-        xml:       Some(xml),
+        xml: Some(xml),
     }
 }
 
 fn element_to_davprop(elem: &Element) -> DavProp {
     DavProp {
-        name:      elem.name.clone(),
-        prefix:    elem.prefix.clone(),
+        name: elem.name.clone(),
+        prefix: elem.prefix.clone(),
         namespace: elem.namespace.clone(),
-        xml:       None,
+        xml: None,
     }
 }
 
@@ -953,7 +930,7 @@ fn davprop_to_element(prop: DavProp) -> Element {
     }
     let mut elem = Element::new(&prop.name);
     if let Some(ref ns) = prop.namespace {
-        let pfx = prop.prefix.as_ref().map(|p| p.as_str()).unwrap_or("");
+        let pfx = prop.prefix.as_deref().unwrap_or("");
         elem = elem.ns(pfx, ns.as_str());
     }
     elem.prefix = prop.prefix;

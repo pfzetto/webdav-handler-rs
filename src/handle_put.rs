@@ -7,6 +7,7 @@ use headers::HeaderMapExt;
 use http::StatusCode as SC;
 use http::{self, Request, Response};
 use http_body::Body as HttpBody;
+use http_body_util::BodyExt;
 
 use crate::body::Body;
 use crate::conditional::if_match_get_tokens;
@@ -14,7 +15,7 @@ use crate::davheaders;
 use crate::fs::*;
 use crate::{DavError, DavResult};
 
-const SABRE: &'static str = "application/x-sabredav-partialupdate";
+const SABRE: &str = "application/x-sabredav-partialupdate";
 
 // This is a nice hack. If the type 'E' is actually an io::Error or a Box<io::Error>,
 // convert it back into a real io::Error. If it is a DavError or a Box<DavError>,
@@ -25,28 +26,26 @@ const SABRE: &'static str = "application/x-sabredav-partialupdate";
 // Also, this is senseless. It's not as if we _do_ anything with the
 // io::Error, other than noticing "oops an error occured".
 fn to_ioerror<E>(err: E) -> io::Error
-where E: StdError + Sync + Send + 'static {
+where
+    E: StdError + Sync + Send + 'static,
+{
     let e = &err as &dyn Any;
     if e.is::<io::Error>() || e.is::<Box<io::Error>>() {
         let err = Box::new(err) as Box<dyn Any>;
         match err.downcast::<io::Error>() {
             Ok(e) => *e,
-            Err(e) => {
-                match e.downcast::<Box<io::Error>>() {
-                    Ok(e) => *(*e),
-                    Err(_) => io::ErrorKind::Other.into(),
-                }
+            Err(e) => match e.downcast::<Box<io::Error>>() {
+                Ok(e) => *(*e),
+                Err(_) => io::ErrorKind::Other.into(),
             },
         }
     } else if e.is::<DavError>() || e.is::<Box<DavError>>() {
         let err = Box::new(err) as Box<dyn Any>;
         match err.downcast::<DavError>() {
             Ok(e) => (*e).into(),
-            Err(e) => {
-                match e.downcast::<Box<DavError>>() {
-                    Ok(e) => (*(*e)).into(),
-                    Err(_) => io::ErrorKind::Other.into(),
-                }
+            Err(e) => match e.downcast::<Box<DavError>>() {
+                Ok(e) => (*(*e)).into(),
+                Err(_) => io::ErrorKind::Other.into(),
             },
         }
     } else {
@@ -78,7 +77,7 @@ impl crate::DavInner {
             count = n.0;
             have_count = true;
         }
-        let path = self.path(&req);
+        let path = self.path(req);
         let meta = self.fs.metadata(&path).await;
 
         // close connection on error.
@@ -86,7 +85,7 @@ impl crate::DavInner {
         res.headers_mut().typed_insert(headers::Connection::close());
 
         // SabreDAV style PATCH?
-        if req.method() == &http::Method::PATCH {
+        if req.method() == http::Method::PATCH {
             if !req
                 .headers()
                 .typed_get::<davheaders::ContentType>()
@@ -153,7 +152,7 @@ impl crate::DavInner {
         }
 
         // check the If and If-* headers.
-        let tokens = if_match_get_tokens(&req, meta.as_ref().ok(), &self.fs, &self.ls, &path);
+        let tokens = if_match_get_tokens(req, meta.as_ref().ok(), &self.fs, &self.ls, &path);
         let tokens = match tokens.await {
             Ok(t) => t,
             Err(s) => return Err(DavError::StatusClose(s)),
@@ -162,7 +161,7 @@ impl crate::DavInner {
         // if locked check if we hold that lock.
         if let Some(ref locksystem) = self.ls {
             let t = tokens.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
-            let principal = self.principal.as_ref().map(|s| s.as_str());
+            let principal = self.principal.as_deref();
             if let Err(_l) = locksystem.check(&path, principal, false, false, t) {
                 return Err(DavError::StatusClose(SC::LOCKED));
             }
@@ -172,14 +171,14 @@ impl crate::DavInner {
         if req
             .headers()
             .typed_get::<davheaders::IfMatch>()
-            .map_or(false, |h| &h.0 == &davheaders::ETagList::Star)
+            .map_or(false, |h| h.0 == davheaders::ETagList::Star)
         {
             oo.create = false;
         }
         if req
             .headers()
             .typed_get::<davheaders::IfNoneMatch>()
-            .map_or(false, |h| &h.0 == &davheaders::ETagList::Star)
+            .map_or(false, |h| h.0 == davheaders::ETagList::Star)
         {
             oo.create_new = true;
         }
@@ -199,7 +198,7 @@ impl crate::DavInner {
 
         if do_range {
             // seek to beginning of requested data.
-            if let Err(_) = file.seek(std::io::SeekFrom::Start(start)).await {
+            if file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
                 return Err(DavError::StatusClose(SC::RANGE_NOT_SATISFIABLE));
             }
         }
@@ -211,24 +210,26 @@ impl crate::DavInner {
         // loop, read body, write to file.
         let mut total = 0u64;
 
-        while let Some(data) = body.data().await {
-            let mut buf = data.map_err(|e| to_ioerror(e))?;
-            let buflen = buf.remaining();
-            total += buflen as u64;
-            // consistency check.
-            if have_count && total > count {
-                break;
-            }
-            // The `Buf` might actually be a `Bytes`.
-            let b = {
-                let b: &mut dyn std::any::Any = &mut buf;
-                b.downcast_mut::<Bytes>()
-            };
-            if let Some(bytes) = b {
-                let bytes = std::mem::replace(bytes, Bytes::new());
-                file.write_bytes(bytes).await?;
-            } else {
-                file.write_buf(Box::new(buf)).await?;
+        while let Some(data) = body.frame().await {
+            let buf = data.map(|e| e.into_data()).map_err(|e| to_ioerror(e))?;
+            if let Ok(mut buf) = buf {
+                let buflen = buf.remaining();
+                total += buflen as u64;
+                // consistency check.
+                if have_count && total > count {
+                    break;
+                }
+                // The `Buf` might actually be a `Bytes`.
+                let b = {
+                    let b: &mut dyn std::any::Any = &mut buf;
+                    b.downcast_mut::<Bytes>()
+                };
+                if let Some(bytes) = b {
+                    let bytes = std::mem::replace(bytes, Bytes::new());
+                    file.write_bytes(bytes).await?;
+                } else {
+                    file.write_buf(Box::new(buf)).await?;
+                }
             }
         }
         file.flush().await?;
