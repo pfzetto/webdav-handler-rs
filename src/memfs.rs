@@ -18,6 +18,7 @@ use futures::{
     future::{BoxFuture, FutureExt},
 };
 use http::StatusCode;
+use xmltree::Element;
 
 use crate::davpath::DavPath;
 use crate::fs::*;
@@ -293,7 +294,7 @@ impl DavFileSystem for MemFs {
         .boxed()
     }
 
-    fn get_prop<'a>(&'a self, path: &'a DavPath, prop: DavProp) -> FsFuture<Vec<u8>> {
+    fn get_prop<'a>(&'a self, path: &'a DavPath, prop: DavProp) -> FsFuture<Element> {
         async move {
             let tree = &mut *self.tree.lock().unwrap();
             let node_id = tree.lookup(path.as_bytes())?;

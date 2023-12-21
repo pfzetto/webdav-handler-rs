@@ -30,6 +30,8 @@ use crate::{DavInner, DavResult};
 const NS_APACHE_URI: &str = "http://apache.org/dav/props/";
 const NS_DAV_URI: &str = "DAV:";
 const NS_MS_URI: &str = "urn:schemas-microsoft-com:";
+const NS_OC_URI: &str = "http://owncloud.org/ns";
+const NS_NS_URI: &str = "http://nextcloud.org/ns";
 
 // list returned by PROPFIND <propname/>.
 const PROPNAME_STR: &[&str] = &[
@@ -414,7 +416,7 @@ impl DavInner {
             {
                 match elem.name.as_str() {
                     "set" => match self.liveprop_set(n, can_deadprop) {
-                        StatusCode::CONTINUE => patch.push((true, element_to_davprop_full(n))),
+                        StatusCode::CONTINUE => patch.push((true, element_to_davprop_full(n.clone()))),
                         s => ret.push((s, element_to_davprop(n))),
                     },
                     "remove" => match self.liveprop_remove(n, can_deadprop) {
@@ -527,7 +529,10 @@ impl PropWriter {
 
         // check the prop namespaces to see what namespaces
         // we need to put in the preamble.
-        let mut ev = XmlWEvent::start_element("D:multistatus").ns("D", NS_DAV_URI);
+        let mut ev = XmlWEvent::start_element("D:multistatus")
+            .ns("D", NS_DAV_URI)
+            .ns("oc", NS_OC_URI)
+            .ns("nc", NS_NS_URI);
         if name != "propertyupdate" {
             let mut a = false;
             let mut m = false;
@@ -806,12 +811,10 @@ impl PropWriter {
             // asking for a specific property.
             let dprop = element_to_davprop(prop);
             if let Ok(xml) = self.fs.get_prop(path, dprop).await {
-                if let Ok(e) = Element::parse(Cursor::new(xml)) {
-                    return Ok(StatusElement {
-                        status: StatusCode::OK,
-                        element: e,
-                    });
-                }
+                return Ok(StatusElement {
+                    status: StatusCode::OK,
+                    element: xml,
+                });
             }
         }
         let prop = if !pfx.is_empty() {
@@ -903,15 +906,12 @@ fn add_sc_elem(hm: &mut HashMap<StatusCode, Vec<Element>>, sc: StatusCode, e: El
     hm.get_mut(&sc).unwrap().push(e)
 }
 
-fn element_to_davprop_full(elem: &Element) -> DavProp {
-    let mut emitter = EventWriter::new(Cursor::new(Vec::new()));
-    elem.write_ev(&mut emitter).ok();
-    let xml = emitter.into_inner().into_inner();
+fn element_to_davprop_full(elem: Element) -> DavProp {
     DavProp {
         name: elem.name.clone(),
         prefix: elem.prefix.clone(),
         namespace: elem.namespace.clone(),
-        xml: Some(xml),
+        xml: Some(elem),
     }
 }
 
@@ -926,7 +926,7 @@ fn element_to_davprop(elem: &Element) -> DavProp {
 
 fn davprop_to_element(prop: DavProp) -> Element {
     if let Some(xml) = prop.xml {
-        return Element::parse2(Cursor::new(xml)).unwrap();
+        return xml;
     }
     let mut elem = Element::new(&prop.name);
     if let Some(ref ns) = prop.namespace {

@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use futures::{future, Future, Stream, TryFutureExt};
 use http::StatusCode;
+use xmltree::{Element, XMLNode};
 
 use crate::davpath::DavPath;
 
@@ -64,7 +65,7 @@ pub struct DavProp {
     /// XML namespace.
     pub namespace: Option<String>,
     /// Value of the property as raw XML.
-    pub xml: Option<Vec<u8>>,
+    pub xml: Option<Element>,
 }
 
 /// Future returned by almost all of the DavFileSystem methods.
@@ -215,7 +216,7 @@ pub trait DavFileSystem: Sync + Send + BoxCloneFs {
     ///
     /// The default implementation returns FsError::NotImplemented.
     #[allow(unused_variables)]
-    fn get_prop<'a>(&'a self, path: &'a DavPath, prop: DavProp) -> FsFuture<Vec<u8>> {
+    fn get_prop<'a>(&'a self, path: &'a DavPath, prop: DavProp) -> FsFuture<Element> {
         notimplemented_fut!("get_prop`")
     }
 
